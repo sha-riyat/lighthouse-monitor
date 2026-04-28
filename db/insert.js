@@ -97,7 +97,7 @@ async function main() {
 
   const filePath = path.resolve(FILE_ARG);
   if (!fs.existsSync(filePath)) {
-    console.error(c("red", "[ERR] File not found: ${filePath}"));
+    console.error(c("red", `[ERR] File not found: ${filePath}`));
     console.error(c("gray", "  -> Run first: PSI_API_KEY=xxx node audit.js"));
     process.exit(1);
   }
@@ -111,7 +111,7 @@ async function main() {
   try {
     auditData = JSON.parse(fs.readFileSync(filePath, "utf-8"));
   } catch (e) {
-    console.error(c("red", "[ERR] Cannot read ${filePath}: ${e.message}"));
+    console.error(c("red", `[ERR] Cannot read ${filePath}: ${e.message}`));
     process.exit(1);
   }
 
@@ -124,7 +124,7 @@ async function main() {
     await pool.query("SELECT 1");
     console.log(`${c("green","[OK]")} PostgreSQL connection OK -> ${DB_CONFIG.host}:${DB_CONFIG.port}/${DB_CONFIG.database}\n`);
   } catch (e) {
-    console.error(c("red", "[ERR] Connection failed: ${e.message}"));
+    console.error(c("red", `[ERR] Connection failed: ${e.message}`));
     process.exit(1);
   }
 

@@ -19,12 +19,15 @@ const { Pool } = pg;
 // --- CONFIG ------------------------------------------------------
 
 const DB_CONFIG = {
-  host:     process.env.DB_HOST     || "localhost",
-  port:     parseInt(process.env.DB_PORT || "5432"),
-  database: process.env.DB_NAME     || "lighthouse_monitor",
-  user:     process.env.DB_USER     || "lighthouse_user",
-  password: process.env.DB_PASSWORD,
-  ssl:      process.env.DB_SSL === "true" ? { rejectUnauthorized: false } : false,
+  host:                    process.env.DB_HOST     || "localhost",
+  port:                    parseInt(process.env.DB_PORT || "5432"),
+  database:                process.env.DB_NAME     || "lighthouse_monitor",
+  user:                    process.env.DB_USER     || "lighthouse_user",
+  password:                process.env.DB_PASSWORD,
+  ssl:                     process.env.DB_SSL === "true" ? { rejectUnauthorized: false } : false,
+  connectionTimeoutMillis: 10_000,   // échec rapide si le tunnel n'est pas prêt
+  idleTimeoutMillis:       30_000,
+  max:                     5,
 };
 
 const FILE_ARG  = process.argv.find(a => a.startsWith("--file="))?.split("=")[1]  || "audit-results.json";
@@ -120,12 +123,24 @@ async function main() {
   console.log(`  ${results.length} pages to insert\n`);
 
   const pool = new Pool(DB_CONFIG);
-  try {
-    await pool.query("SELECT 1");
-    console.log(`${c("green","[OK]")} PostgreSQL connection OK -> ${DB_CONFIG.host}:${DB_CONFIG.port}/${DB_CONFIG.database}\n`);
-  } catch (e) {
-    console.error(c("red", `[ERR] Connection failed: ${e.message}`));
-    process.exit(1);
+
+  // Retry jusqu'à 5 fois (utile si le tunnel SSH est lent à s'établir)
+  for (let attempt = 1; attempt <= 5; attempt++) {
+    try {
+      await pool.query("SELECT 1");
+      console.log(`${c("green","[OK]")} PostgreSQL connection OK -> ${DB_CONFIG.host}:${DB_CONFIG.port}/${DB_CONFIG.database}\n`);
+      break;
+    } catch (e) {
+      const isLast = attempt === 5;
+      console.warn(c("yellow", `[WARN] Connection attempt ${attempt}/5 failed: ${e.message}`));
+      if (isLast) {
+        console.error(c("red", "[ERR] Could not connect to PostgreSQL after 5 attempts — is the SSH tunnel up?"));
+        await pool.end().catch(() => {});
+        process.exit(1);
+      }
+      // Backoff exponentiel : 2s, 4s, 6s, 8s
+      await new Promise(r => setTimeout(r, attempt * 2000));
+    }
   }
 
   const runLabel = makeRunLabel();

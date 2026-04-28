@@ -51,8 +51,8 @@ jobs:
           echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/github_actions
           chmod 600 ~/.ssh/github_actions
 
-          # Ajouter le serveur aux known_hosts (évite la confirmation interactive)
-          ssh-keyscan -p ${{ secrets.SSH_PORT }} ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
+          # Ajouter le serveur aux known_hosts (-T 10 : timeout 10s)
+          ssh-keyscan -T 10 -p ${{ secrets.SSH_PORT }} ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts 2>/dev/null
 
           # Ouvrir le tunnel en arrière-plan
           # -f  : passe en arrière-plan
@@ -62,11 +62,23 @@ jobs:
             -L 5432:localhost:5432 \
             -i ~/.ssh/github_actions \
             -p ${{ secrets.SSH_PORT }} \
+            -o ExitOnForwardFailure=yes \
+            -o ServerAliveInterval=15 \
+            -o ServerAliveCountMax=3 \
+            -o ConnectTimeout=15 \
             ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}
 
-          # Vérifier que le tunnel est actif
-          sleep 2
-          echo "✓ Tunnel SSH ouvert sur localhost:5432"
+          # Attendre que le port soit réellement ouvert (jusqu'à 30s)
+          echo "⏳ Attente de l'ouverture du tunnel sur localhost:5432..."
+          for i in $(seq 1 15); do
+            if nc -z 127.0.0.1 5432 2>/dev/null; then
+              echo "✓ Tunnel SSH actif sur localhost:5432 (tentative $i)"
+              exit 0
+            fi
+            sleep 2
+          done
+          echo "❌ Le tunnel SSH n'a pas pu être établi après 30s"
+          exit 1
 
       # ── 5. Vérifier que les URLs sont disponibles ─────────────────────────────
       - name: Check URL list
@@ -147,4 +159,3 @@ jobs:
               console.log('| Pages below 50 | ' + perfs.filter(s => s < 50).length + ' |');
             " >> $GITHUB_STEP_SUMMARY
           fi
-

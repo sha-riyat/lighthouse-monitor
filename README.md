@@ -1,59 +1,59 @@
-# 🚦 Spurt! Lighthouse Monitoring Pipeline
 
-Audit automatique mensuel des performances Lighthouse pour toutes les propriétés SpurtX! & Spurt!  
-**Stack :** PageSpeed Insights API → Node.js → PostgreSQL → Metabase (Docker)
+# Spurt! Lighthouse Monitoring Pipeline
+
+Automated monthly Lighthouse audits for all SpurtX! & Spurt! properties.  
+**Stack:** PageSpeed Insights API -> Node.js -> PostgreSQL -> Metabase (Docker)
 
 ---
 
 ## Architecture
 
 ```
-GitHub Actions (cron 1x/mois)
-        │
-        │  Tunnel SSH chiffré
-        ▼
+GitHub Actions (cron 1x/month)
+        |
+        |  Encrypted SSH tunnel
+        v
    Ubuntu Server
-        │
-        ├── audit.js ──── PageSpeed Insights API
-        │       │
-        │       ▼
-        │  audit-results.json
-        │       │
-        │       ▼
-        ├── db/insert.js
-        │       │
-        │       ▼
-        ├── PostgreSQL (port 5432 — jamais exposé publiquement)
-        │
-        └── Metabase Docker (port 3000)
+        |
+        +-- audit.js ---------- PageSpeed Insights API
+        |       |
+        |       v
+        |  audit-results.json
+        |       |
+        |       v
+        +-- db/insert.js
+        |       |
+        |       v
+        +-- PostgreSQL (port 5432 – never exposed publicly)
+        |
+        +-- Metabase Docker (port 3000)
 ```
 
 ---
-
-## Secrets GitHub requis
+```
+## GitHub Secrets required
 
 | Secret | Description |
-|---|---|
-| `PSI_API_KEY` | Clé API Google PageSpeed Insights |
-| `SSH_HOST` | IP publique du serveur |
-| `SSH_PORT` | Port SSH du serveur (souvent `22`) |
-| `SSH_USER` | Username SSH (ex: `sha`) |
-| `SSH_PRIVATE_KEY` | Clé privée SSH dédiée à GitHub Actions |
-| `DB_NAME` | `lighthouse_monitor` |
-| `DB_USER` | `lighthouse_user` |
-| `DB_PASSWORD` | Mot de passe PostgreSQL |
+|--------|-------------|
+| `PSI_API_KEY` | Google PageSpeed Insights API key |
+| `SSH_HOST` | Public IP of your server |
+| `SSH_PORT` | SSH port (usually 22) |
+| `SSH_USER` | SSH username (e.g. sha) |
+| `SSH_PRIVATE_KEY` | SSH private key for GitHub Actions |
+| `DB_NAME` | lighthouse_monitor |
+| `DB_USER` | lighthouse_user |
+| `DB_PASSWORD` | PostgreSQL password |
 
-> `DB_HOST` n'est **pas** un secret — GitHub Actions utilise toujours `127.0.0.1`
-> via le tunnel SSH, peu importe le serveur.
-
+> `DB_HOST` is **not** a secret – GitHub Actions always uses 127.0.0.1 via the SSH tunnel.
+```
 ---
 
-## Étape 1 — Installer les dépendances système
+## Step 1 — Install system dependencies
 
-Se connecter au serveur via SSH, puis :
+Connect to your server via SSH and run:
 
 ```bash
-# Mise à jour système
+# Update system
 sudo apt update && sudo apt upgrade -y
 
 # Node.js 20 LTS
@@ -75,14 +75,14 @@ echo \
 sudo apt update
 sudo apt install -y docker-ce docker-ce-cli containerd.io
 
-# Permettre à ton user de lancer Docker sans sudo
+# Allow your user to run Docker without sudo
 sudo usermod -aG docker $USER
 newgrp docker
 
 # Git
 sudo apt install -y git
 
-# Vérifications
+# Verify installations
 node --version      # v20.x.x
 psql --version      # psql (PostgreSQL) 16.x
 docker --version    # Docker version 24.x+
@@ -90,58 +90,48 @@ docker --version    # Docker version 24.x+
 
 ---
 
-## Étape 2 — Générer une clé SSH dédiée à GitHub Actions
+## Step 2 — Generate a dedicated SSH key for GitHub Actions
 
-Cette clé est uniquement pour GitHub Actions — elle ne remplace pas ta clé SSH personnelle.
+This key is only for GitHub Actions – it does not replace your personal SSH key.
 
-**Sur ton serveur** (ou sur ta machine locale, peu importe) :
+**On your server** (or any machine):
 
 ```bash
-# Générer une paire de clés ED25519 sans passphrase
-# (GitHub Actions ne peut pas saisir de passphrase interactivement)
 ssh-keygen -t ed25519 -C "github-actions-lighthouse" -f ~/.ssh/github_actions -N ""
 ```
 
-Cela crée deux fichiers :
-- `~/.ssh/github_actions` → **clé privée** (ira dans GitHub Secrets)
-- `~/.ssh/github_actions.pub` → **clé publique** (ira sur le serveur)
+This creates:
+- `~/.ssh/github_actions` -> **private key** (goes into GitHub Secrets)
+- `~/.ssh/github_actions.pub` -> **public key** (goes on the server)
 
 ---
 
-## Étape 3 — Installer la clé publique sur le serveur
+## Step 3 — Install the public key on the server
 
-**Sur le serveur**, ajouter la clé publique aux clés autorisées :
+**On the server**, add the public key to authorised keys:
 
 ```bash
-# Afficher la clé publique
-cat ~/.ssh/github_actions.pub
-
-# L'ajouter aux clés autorisées
 cat ~/.ssh/github_actions.pub >> ~/.ssh/authorized_keys
-
-# Vérifier les permissions (important — SSH refuse si trop permissif)
 chmod 700 ~/.ssh
 chmod 600 ~/.ssh/authorized_keys
 ```
 
-### Vérifier que la connexion SSH fonctionne
-
-Tester depuis la même machine avant d'aller plus loin :
+### Test the SSH connection
 
 ```bash
 ssh -i ~/.ssh/github_actions -p 22 sha@localhost "echo 'SSH OK'"
-# → SSH OK
+# -> SSH OK
 ```
 
 ---
 
-## Étape 4 — Configurer PostgreSQL
+## Step 4 — Set up PostgreSQL
 
 ```bash
 sudo -i -u postgres
 psql <<EOF
 CREATE DATABASE lighthouse_monitor;
-CREATE USER lighthouse_user WITH ENCRYPTED PASSWORD 'CHANGER_CE_MOT_DE_PASSE';
+CREATE USER lighthouse_user WITH ENCRYPTED PASSWORD 'CHANGE_THIS_PASSWORD';
 GRANT ALL PRIVILEGES ON DATABASE lighthouse_monitor TO lighthouse_user;
 \c lighthouse_monitor
 GRANT ALL ON SCHEMA public TO lighthouse_user;
@@ -151,134 +141,133 @@ exit
 
 ---
 
-## Étape 5 — Cloner le repo et installer les dépendances Node
+## Step 5 — Clone the repo and install Node dependencies
 
 ```bash
 cd ~
-git clone https://github.com/VOTRE_ORG/VOTRE_REPO.git lighthouse-monitor
+git clone https://github.com/YOUR_ORG/YOUR_REPO.git lighthouse-monitor
 cd lighthouse-monitor
 npm install
 ```
 
 ---
 
-## Étape 6 — Appliquer le schéma PostgreSQL
+## Step 6 — Apply the PostgreSQL schema
 
 ```bash
-# Tu dois être dans ~/lighthouse-monitor
 cd ~/lighthouse-monitor
 
-PGPASSWORD=CHANGER_CE_MOT_DE_PASSE psql \
+PGPASSWORD=CHANGE_THIS_PASSWORD psql \
   -h localhost \
   -U lighthouse_user \
   -d lighthouse_monitor \
   -f db/schema.sql
 ```
 
-### Vérifier
+### Verify
 
 ```bash
-PGPASSWORD=CHANGER_CE_MOT_DE_PASSE psql \
+PGPASSWORD=CHANGE_THIS_PASSWORD psql \
   -h localhost -U lighthouse_user -d lighthouse_monitor -c "\dt"
-# → audit_runs, audit_results
+# -> audit_runs, audit_results
 
-PGPASSWORD=CHANGER_CE_MOT_DE_PASSE psql \
+PGPASSWORD=CHANGE_THIS_PASSWORD psql \
   -h localhost -U lighthouse_user -d lighthouse_monitor -c "\dv"
-# → latest_scores, monthly_progress, critical_pages, site_summary
+# -> latest_scores, monthly_progress, critical_pages, site_summary
 ```
 
 ---
 
-## Étape 7 — Configurer les variables d'environnement
+## Step 7 — Configure environment variables
 
 ```bash
 cd ~/lighthouse-monitor
 
 cat > .env <<EOF
 # PageSpeed Insights API
-PSI_API_KEY=VOTRE_CLE_API_GOOGLE
+PSI_API_KEY=YOUR_GOOGLE_API_KEY
 
 # PostgreSQL
 DB_HOST=localhost
 DB_PORT=5432
 DB_NAME=lighthouse_monitor
 DB_USER=lighthouse_user
-DB_PASSWORD=CHANGER_CE_MOT_DE_PASSE
+DB_PASSWORD=CHANGE_THIS_PASSWORD
 DB_SSL=false
 EOF
 
 chmod 600 .env
 ```
 
-> **Obtenir la clé PSI gratuite :**  
-> https://console.cloud.google.com → Bibliothèque → "PageSpeed Insights API"  
-> → Activer → Identifiants → Créer une clé API
+> **Get your free PSI key:**  
+> https://console.cloud.google.com -> Library -> "PageSpeed Insights API"  
+> -> Enable -> Credentials -> Create API key
 
 ---
 
-## Étape 8 — Tester le pipeline localement
+## Step 8 — Test the pipeline locally
 
 ```bash
 cd ~/lighthouse-monitor
 export $(grep -v '^#' .env | grep -v '^$' | xargs)
 
-# Test rapide sur 3 URLs
+# Quick test on 3 URLs
 npm run audit:test
 
-# Vérifier les fichiers générés
+# Check generated files
 ls -la audit-results.json audit-results.csv
 
-# Insérer en base
+# Insert into database
 npm run db:insert
 
-# Vérifier l'insertion
+# Verify insertion
 PGPASSWORD=$DB_PASSWORD psql -h localhost -U lighthouse_user -d lighthouse_monitor \
   -c "SELECT run_label, total_urls, successful, failed FROM audit_runs ORDER BY started_at DESC LIMIT 5;"
 ```
 
 ---
 
-## Étape 9 — Lancer l'audit complet
+## Step 9 — Run a full audit
 
 ```bash
 cd ~/lighthouse-monitor
 export $(grep -v '^#' .env | grep -v '^$' | xargs)
 
-# 35 pages × 2 stratégies ≈ 20–25 min
+# ~35 pages x 2 strategies ≈ 20-25 minutes
 npm run run:full
 ```
 
 ---
 
-## Étape 10 — Installer Metabase avec Docker
+## Step 10 — Install Metabase with Docker
 
-Metabase utilisera la base `lighthouse_monitor` déjà créée.
+Metabase will connect to the existing `lighthouse_monitor` database.
 
-### Autoriser PostgreSQL à accepter les connexions Docker
+### Allow PostgreSQL to accept Docker connections
 
 ```bash
-# Éditer postgresql.conf
+# Edit postgresql.conf
 sudo nano /etc/postgresql/16/main/postgresql.conf
-# Modifier :
+# Change:
 #   listen_addresses = 'localhost'
-# → listen_addresses = '*'
+# -> listen_addresses = '*'
 
-# Éditer pg_hba.conf
+# Edit pg_hba.conf
 sudo nano /etc/postgresql/16/main/pg_hba.conf
-# Ajouter à la fin :
+# Add at the end:
 #   host  all  all  172.17.0.0/16  scram-sha-256
 
 sudo systemctl restart postgresql
 ```
 
-### Trouver l'IP du bridge Docker
+### Find the Docker bridge IP
 
 ```bash
 ip route | grep docker0 | awk '{print $9}'
-# Résultat typique : 172.17.0.1
+# Typical result: 172.17.0.1
 ```
 
-### Lancer le conteneur Metabase
+### Start the Metabase container
 
 ```bash
 docker run -d \
@@ -289,165 +278,157 @@ docker run -d \
   -e "MB_DB_DBNAME=lighthouse_monitor" \
   -e "MB_DB_PORT=5432" \
   -e "MB_DB_USER=lighthouse_user" \
-  -e "MB_DB_PASS=CHANGER_CE_MOT_DE_PASSE" \
+  -e "MB_DB_PASS=CHANGE_THIS_PASSWORD" \
   -e "MB_DB_HOST=172.17.0.1" \
   metabase/metabase:latest
 ```
 
-> ⚠️ Remplace `172.17.0.1` par l'IP obtenue à l'étape précédente.
+> Replace `172.17.0.1` with the IP you found above.
 
-### Suivre le démarrage
+### Check logs
 
 ```bash
 docker logs -f metabase
-# Attendre : INFO metabase.core :: Metabase Initialization COMPLETE
+# Wait for: INFO metabase.core :: Metabase Initialization COMPLETE
 ```
 
-Metabase accessible sur : **`http://IP_DE_TON_SERVEUR:3000`**
+Metabase is now available at **`http://YOUR_SERVER_IP:3000`**
 
 ---
 
-## Étape 11 — Connecter Metabase à la base lighthouse
+## Step 11 — Connect Metabase to the database
 
-1. Ouvrir `http://IP_SERVEUR:3000`
-2. Créer le compte admin au premier démarrage
-3. **Admin → Databases → Add database**
+1. Open `http://YOUR_SERVER_IP:3000`
+2. Create the admin account on first start
+3. **Admin -> Databases -> Add database**
 
-| Champ | Valeur |
-|---|---|
+| Field | Value |
+|-------|-------|
 | Database type | PostgreSQL |
 | Display name | Lighthouse Monitor |
-| Host | `172.17.0.1` |
-| Port | `5432` |
-| Database name | `lighthouse_monitor` |
-| Username | `lighthouse_user` |
-| Password | ton mot de passe |
+| Host | 172.17.0.1 |
+| Port | 5432 |
+| Database name | lighthouse_monitor |
+| Username | lighthouse_user |
+| Password | your PostgreSQL password |
 
-4. Cliquer **Save**
+4. Click **Save**
 
-### Questions Metabase recommandées
+### Recommended Metabase questions
 
-| Question | Vue | Graphique |
-|---|---|---|
-| Progression mensuelle | `monthly_progress` | Line chart — `avg_performance` par `audit_date`, groupé par `site_group` |
-| Score actuel par page | `latest_scores` | Table — filtrer `device = mobile` |
-| Pages critiques | `critical_pages` | Table — triée par `score_performance ASC` |
-| Vue par site | `site_summary` | Bar chart — `avg_performance` par `site_group` |
-| Gap à la cible | `latest_scores` | Table — colonne `gap_to_target` |
+| Question | View | Chart |
+|----------|------|-------|
+| Monthly progress | monthly_progress | Line chart – avg_performance by audit_date, grouped by site_group |
+| Latest scores per page | latest_scores | Table – filter device = mobile |
+| Critical pages | critical_pages | Table – sorted by performance ASC |
+| Site summary | site_summary | Bar chart – avg_performance by site_group |
 
 ---
 
-## Étape 12 — Configurer les GitHub Secrets
+## Step 12 — Configure GitHub Secrets
 
-Dans le repo GitHub : **Settings → Secrets and variables → Actions → New repository secret**
+In your GitHub repo: **Settings -> Secrets and variables -> Actions -> New repository secret**
 
-### Récupérer la clé privée à copier
+### To get the private key content
 
 ```bash
 cat ~/.ssh/github_actions
-# Copier TOUT le contenu, incluant les lignes :
+# Copy everything, including:
 # -----BEGIN OPENSSH PRIVATE KEY-----
 # ...
 # -----END OPENSSH PRIVATE KEY-----
 ```
 
-### Ajouter les secrets
+### Add these secrets
 
-| Secret | Valeur |
-|---|---|
-| `PSI_API_KEY` | Clé API Google PageSpeed Insights |
-| `SSH_HOST` | IP publique du serveur (ex: `192.168.1.x` en local) |
-| `SSH_PORT` | `22` |
-| `SSH_USER` | `sha` |
-| `SSH_PRIVATE_KEY` | Contenu complet de `~/.ssh/github_actions` |
-| `DB_NAME` | `lighthouse_monitor` |
-| `DB_USER` | `lighthouse_user` |
-| `DB_PASSWORD` | Ton mot de passe PostgreSQL |
+| Secret | Value |
+|--------|-------|
+| `PSI_API_KEY` | Your Google PageSpeed Insights API key |
+| `SSH_HOST` | Public IP of your server |
+| `SSH_PORT` | 22 |
+| `SSH_USER` | sha |
+| `SSH_PRIVATE_KEY` | Full content of ~/.ssh/github_actions |
+| `DB_NAME` | lighthouse_monitor |
+| `DB_USER` | lighthouse_user |
+| `DB_PASSWORD` | Your PostgreSQL password |
 
-> **Trouver l'IP du serveur :**
-> ```bash
-> # IP locale (réseau maison / entreprise)
-> hostname -I | awk '{print $1}'
->
-> # IP publique (internet)
-> curl ifconfig.me
-> ```
-> En test à la maison → utilise l'IP locale.  
-> En entreprise → utilise l'IP publique ou le hostname fourni par l'équipe infra.
+> **Find your server IP:**  
+> Local IP (home/office): `hostname -I | awk '{print $1}'`  
+> Public IP: `curl ifconfig.me`
 
 ---
 
-## Étape 13 — Déclencher un audit test depuis GitHub Actions
+## Step 13 — Trigger a test audit from GitHub Actions
 
-1. Aller dans le repo → **Actions → Monthly Lighthouse Audit**
-2. Cliquer **Run workflow**
-3. Renseigner `max_urls=3` pour un test rapide
-4. Suivre l'exécution — vérifier que le tunnel SSH s'ouvre et que l'insertion réussit
+1. Go to your repo -> **Actions -> Monthly Lighthouse Audit**
+2. Click **Run workflow**
+3. Enter `max_urls=3` for a quick test
+4. Watch the run – verify SSH tunnel and database insertion succeed
 
-Le cron automatique tourne le **1er de chaque mois à 6h00 UTC**.
+The automatic cron runs on the **1st day of each month at 06:00 UTC**.
 
 ---
 
-## Structure du projet
+## Project structure
 
 ```
 lighthouse-monitor/
-├── audit.js                          # Script d'audit principal
-├── urls-to-audit.txt                 # Liste des 35 URLs (non commitée)
-├── package.json
-├── .env                              # Variables locales (jamais commitée)
-├── .gitignore
-├── db/
-│   ├── schema.sql                    # Schéma PostgreSQL + vues Metabase
-│   └── insert.js                     # Insère audit-results.json → PostgreSQL
-└── .github/
-    └── workflows/
-        └── monthly-audit.yml         # Cron GitHub Actions + tunnel SSH
++-- audit.js                          # Main audit script (simplified)
++-- urls-to-audit.txt                 # List of URLs (not committed)
++-- package.json
++-- .env                              # Local variables (never committed)
++-- .gitignore
++-- db/
+|   +-- schema.sql                    # PostgreSQL schema + Metabase views
+|   +-- insert.js                     # Inserts audit-results.json into PostgreSQL
++-- .github/
+    +-- workflows/
+        +-- monthly-audit.yml         # Cron + SSH tunnel
 ```
 
 ---
 
-## Dépannage
+## Troubleshooting
 
-### Tester le tunnel SSH manuellement
+### Test the SSH tunnel manually
 
 ```bash
-# Depuis ta machine locale, simuler ce que GitHub Actions fait
+# From your local machine, simulate what GitHub Actions does
 ssh -f -N \
   -L 5432:localhost:5432 \
   -i ~/.ssh/github_actions \
   -p 22 \
-  sha@IP_DU_SERVEUR
+  sha@YOUR_SERVER_IP
 
-# Tester la connexion via le tunnel
-PGPASSWORD=CHANGER_CE_MOT_DE_PASSE psql \
+# Test connection through the tunnel
+PGPASSWORD=YOUR_PASSWORD psql \
   -h 127.0.0.1 -U lighthouse_user -d lighthouse_monitor -c "SELECT 1;"
-# → doit retourner : 1
+# -> should return: 1
 ```
 
-### PostgreSQL — vérifier le statut
+### Check PostgreSQL status
 
 ```bash
 sudo systemctl status postgresql
 sudo journalctl -u postgresql -n 30
 ```
 
-### Metabase Docker — vérifier le statut
+### Check Metabase status
 
 ```bash
-docker ps                         # Vérifier que le conteneur tourne
-docker logs metabase --tail 50    # Voir les derniers logs
-docker restart metabase           # Redémarrer si besoin
+docker ps
+docker logs metabase --tail 50
+docker restart metabase
 ```
 
-### Tester la connexion PostgreSQL depuis Docker
+### Test PostgreSQL connection from Docker
 
 ```bash
 docker run --rm postgres:16 \
   psql -h 172.17.0.1 -U lighthouse_user -d lighthouse_monitor -c "SELECT 1;"
 ```
 
-### Vérifier les dernières insertions
+### Verify recent insertions
 
 ```bash
 PGPASSWORD=$DB_PASSWORD psql -h localhost -U lighthouse_user -d lighthouse_monitor -c "
@@ -456,3 +437,11 @@ PGPASSWORD=$DB_PASSWORD psql -h localhost -U lighthouse_user -d lighthouse_monit
   ORDER BY started_at DESC LIMIT 5;
 "
 ```
+
+---
+
+## Notes
+
+- The audit script collects only **performance, accessibility, best practices, SEO** scores plus Core Web Vitals (LCP, TBT, CLS, FCP).  
+- PWA metrics and CruX data have been removed because Lighthouse no longer provides PWA scores and we focus on lab data.  
+- All code uses simple British English and is deliberately minimal for easy maintenance.

@@ -1,0 +1,151 @@
+name: Monthly Lighthouse Audit
+
+on:
+  # Cron : 1er de chaque mois à 6h00 UTC
+  schedule:
+    - cron: "0 6 1 * *"
+
+  # Déclenchement manuel depuis l'onglet Actions sur GitHub
+  workflow_dispatch:
+    inputs:
+      max_urls:
+        description: "Limiter le nombre d'URLs (vide = toutes)"
+        required: false
+        default: ""
+      label:
+        description: "Label du run (ex: 2026-05-manual)"
+        required: false
+        default: ""
+
+env:
+  NODE_VERSION: "20"
+
+jobs:
+  audit:
+    name: Run Lighthouse Audit & Store Results
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      # ── 1. Checkout ──────────────────────────────────────────────────────────
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # ── 2. Node.js ───────────────────────────────────────────────────────────
+      - name: Setup Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+
+      # ── 3. Dépendances ───────────────────────────────────────────────────────
+      - name: Install dependencies
+        run: npm ci
+
+      # ── 4. Ouvrir le tunnel SSH vers PostgreSQL ───────────────────────────────
+      # Le port 5432 du serveur est forwardé sur le port 5432 local du runner
+      - name: Open SSH tunnel to PostgreSQL
+        run: |
+          mkdir -p ~/.ssh
+
+          # Écrire la clé privée
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/github_actions
+          chmod 600 ~/.ssh/github_actions
+
+          # Ajouter le serveur aux known_hosts (évite la confirmation interactive)
+          ssh-keyscan -p ${{ secrets.SSH_PORT }} ${{ secrets.SSH_HOST }} >> ~/.ssh/known_hosts
+
+          # Ouvrir le tunnel en arrière-plan
+          # -f  : passe en arrière-plan
+          # -N  : ne lance aucune commande distante, juste le tunnel
+          # -L  : forward local:5432 → serveur:5432
+          ssh -f -N \
+            -L 5432:localhost:5432 \
+            -i ~/.ssh/github_actions \
+            -p ${{ secrets.SSH_PORT }} \
+            ${{ secrets.SSH_USER }}@${{ secrets.SSH_HOST }}
+
+          # Vérifier que le tunnel est actif
+          sleep 2
+          echo "✓ Tunnel SSH ouvert sur localhost:5432"
+
+      # ── 5. Vérifier que les URLs sont disponibles ─────────────────────────────
+      - name: Check URL list
+        run: |
+          if [ ! -f "urls-to-audit.txt" ]; then
+            echo "❌ urls-to-audit.txt not found"
+            exit 1
+          fi
+          echo "✓ $(wc -l < urls-to-audit.txt) URLs found"
+
+      # ── 6. Lancer l'audit Lighthouse ─────────────────────────────────────────
+      - name: Run Lighthouse audit
+        env:
+          PSI_API_KEY: ${{ secrets.PSI_API_KEY }}
+        run: |
+          MAX_ARG=""
+          if [ -n "${{ github.event.inputs.max_urls }}" ]; then
+            MAX_ARG="--max=${{ github.event.inputs.max_urls }}"
+          fi
+          node audit.js --concurrency=2 $MAX_ARG
+
+      # ── 7. Vérifier que les résultats ont été générés ─────────────────────────
+      - name: Verify audit output
+        run: |
+          if [ ! -f "audit-results.json" ]; then
+            echo "❌ audit-results.json not generated"
+            exit 1
+          fi
+          PAGES=$(node -e "const d=require('./audit-results.json'); console.log(d.results?.length || 0)")
+          echo "✓ audit-results.json — ${PAGES} pages"
+
+      # ── 8. Insérer en PostgreSQL via le tunnel SSH ────────────────────────────
+      - name: Insert results into PostgreSQL
+        env:
+          DB_HOST: "127.0.0.1"   # tunnel local — ne pas changer
+          DB_PORT: "5432"
+          DB_NAME: ${{ secrets.DB_NAME }}
+          DB_USER: ${{ secrets.DB_USER }}
+          DB_PASSWORD: ${{ secrets.DB_PASSWORD }}
+          DB_SSL: "false"
+        run: |
+          LABEL_ARG=""
+          if [ -n "${{ github.event.inputs.label }}" ]; then
+            LABEL_ARG="--label=${{ github.event.inputs.label }}"
+          fi
+          node db/insert.js $LABEL_ARG
+
+      # ── 9. Upload des artefacts (90 jours de rétention) ───────────────────────
+      - name: Upload audit artifacts
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: lighthouse-audit-${{ github.run_number }}-${{ github.run_id }}
+          path: |
+            audit-results.json
+            audit-results.csv
+            audit-summary.md
+          retention-days: 90
+
+      # ── 10. Résumé dans GitHub Actions ───────────────────────────────────────
+      - name: Write job summary
+        if: always()
+        run: |
+          echo "## 🚦 Lighthouse Audit — $(date +'%Y-%m-%d')" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          if [ -f "audit-results.json" ]; then
+            node -e "
+              const d = require('./audit-results.json');
+              const valid = d.results.filter(r => !r.mobile?.error);
+              const perfs = valid.map(r => r.mobile?.scores?.performance).filter(Boolean);
+              const avg   = Math.round(perfs.reduce((s,v) => s+v, 0) / perfs.length);
+              const at95  = perfs.filter(s => s >= 95).length;
+              console.log('| Metric | Value |');
+              console.log('|---|---|');
+              console.log('| Pages audited | ' + valid.length + ' |');
+              console.log('| Avg mobile performance | **' + avg + '/100** |');
+              console.log('| Pages at target (≥95) | ' + at95 + '/' + valid.length + ' |');
+              console.log('| Pages below 50 | ' + perfs.filter(s => s < 50).length + ' |');
+            " >> $GITHUB_STEP_SUMMARY
+          fi
+

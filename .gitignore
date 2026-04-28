@@ -1,0 +1,18 @@
+# Environnement — JAMAIS commité
+.env
+.env.local
+.env.*
+
+# Résultats d'audit — trop lourds pour Git
+audit-results.json
+audit-results.csv
+audit-summary.md
+dashboard-data.json
+
+# Node
+node_modules/
+npm-debug.log*
+
+# OS
+.DS_Store
+Thumbs.db

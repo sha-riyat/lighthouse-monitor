@@ -1,0 +1,20 @@
+{
+  "name": "spurt-lighthouse-monitor",
+  "version": "1.0.0",
+  "description": "Automated Lighthouse audits for SpurtX! & Spurt! — PostgreSQL + Metabase",
+  "type": "module",
+  "scripts": {
+    "audit":      "node audit.js",
+    "audit:test": "node audit.js --max=3",
+    "db:setup":   "psql $DATABASE_URL -f db/schema.sql",
+    "db:insert":  "node db/insert.js",
+    "run:full":   "npm run audit && npm run db:insert"
+  },
+  "dependencies": {
+    "node-fetch": "^3.3.2",
+    "pg":         "^8.11.5"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

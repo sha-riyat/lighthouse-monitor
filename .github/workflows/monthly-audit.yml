@@ -41,8 +41,6 @@ jobs:
       # ── 3. Dépendances ───────────────────────────────────────────────────────
       - name: Install dependencies
         run: npm ci
-      - name: install
-        run: npm install -g
       # ── 4. Ouvrir le tunnel SSH vers PostgreSQL ───────────────────────────────
       # Le port 5432 du serveur est forwardé sur le port 5432 local du runner
       - name: Open SSH tunnel to PostgreSQL
